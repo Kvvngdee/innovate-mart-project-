@@ -49,6 +49,7 @@ resource "aws_subnet" "private_subnets" {
   tags = {
     Name = "${var.cluster_name}-private-subnet-${count.index}"
     "kubernetes.io/role/internal-elb" = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "owned" # Required for EKS auto-discovery
   }
 }
 
@@ -77,42 +78,6 @@ resource "aws_route_table_association" "public_rt_assoc" {
   route_table_id = aws_route_table.public_rt.id
 }
 
-# Create an EIP for the NAT Gateway
-resource "aws_eip" "nat_eip" {
-  domain = "vpc"
-  tags = {
-    Name = "${var.cluster_name}-nat-eip"
-  }
-}
-
-# Create a NAT Gateway in the public subnet
-resource "aws_nat_gateway" "nat_gw" {
-  allocation_id = aws_eip.nat_eip.id
-  subnet_id     = aws_subnet.public_subnets[0].id
-  tags = {
-    Name = "${var.cluster_name}-nat-gw"
-  }
-}
-
-# Create a Private Route Table for the private subnets
-resource "aws_route_table" "private_rt" {
-  vpc_id = aws_vpc.innovatemart_vpc.id
-  route {
-    cidr_block = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat_gw.id
-  }
-  tags = {
-    Name = "${var.cluster_name}-private-rt"
-  }
-}
-
-# Associate private subnets with the private route table
-resource "aws_route_table_association" "private_rt_assoc" {
-  count          = 2
-  subnet_id      = aws_subnet.private_subnets[count.index].id
-  route_table_id = aws_route_table.private_rt.id
-}
-
 # --- EKS Cluster ---
 resource "aws_eks_cluster" "innovatemart_eks" {
   name = var.cluster_name
@@ -125,15 +90,6 @@ resource "aws_eks_cluster" "innovatemart_eks" {
     aws_iam_role_policy_attachment.eks_cluster_policy_attachment_1,
     aws_iam_role_policy_attachment.eks_cluster_policy_attachment_2,
   ]
-}
-
-# Tag the private subnets after the cluster is created to break the cycle
-resource "aws_ec2_tag" "private_subnet_tags" {
-  count       = length(aws_subnet.private_subnets)
-  resource_id = aws_subnet.private_subnets[count.index].id
-  key         = "kubernetes.io/cluster/${var.cluster_name}"
-  value       = "owned"
-  depends_on = [aws_eks_cluster.innovatemart_eks]
 }
 
 # --- EKS Managed Node Group ---
@@ -154,6 +110,5 @@ resource "aws_eks_node_group" "innovatemart_node_group" {
     aws_iam_role_policy_attachment.eks_nodegroup_policy_attachment_1,
     aws_iam_role_policy_attachment.eks_nodegroup_policy_attachment_2,
     aws_iam_role_policy_attachment.eks_nodegroup_policy_attachment_3,
-    aws_ec2_tag.private_subnet_tags,
   ]
 }
